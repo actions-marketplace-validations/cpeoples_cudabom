@@ -25,10 +25,12 @@ The content/ tree is overwritten on every run; do not hand-edit it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 # Resolve repo-root-relative paths so the script works from any CWD.
@@ -93,6 +95,21 @@ def strip_leading_h1(body: str) -> str:
     return body
 
 
+def assets_base() -> str:
+    """The site-root-relative base for copied brand assets.
+
+    README art is referenced by its `raw.githubusercontent.com` URL; on the
+    site it is served from `static/assets` (see `copy_docs_assets`). Raw `<img>`
+    `src` attributes in the prose are not run through Hugo's `relURL`, so unlike
+    Markdown links they do not pick up the Pages subpath automatically. Build the
+    subpath here from the same `HUGO_BASEURL` the deploy uses, so the images
+    resolve both locally (`/`) and under the project path (`/cudabom/`).
+    """
+    base = os.environ.get("HUGO_BASEURL", "/")
+    path = urllib.parse.urlsplit(base).path or "/"
+    return "/" + path.strip("/") + "/assets/" if path.strip("/") else "/assets/"
+
+
 def rewrite_repo_links(body: str) -> str:
     """Point intra-repo doc links at their generated site pages.
 
@@ -100,12 +117,12 @@ def rewrite_repo_links(body: str) -> str:
     `../CONTRIBUTING.md`). On the site, map the docs we publish to their slugs
     and leave the rest pointing at GitHub so nothing dead-ends. Brand art that
     the README references by its raw.githubusercontent.com URL is repointed to
-    the site-local copy under /assets/ (see `copy_docs_assets`), so the images
-    render on the site instead of depending on the public GitHub raw host.
+    the site-local copy under `static/assets` (see `copy_docs_assets`), through
+    the baseURL-aware `assets_base` so the images render on the project subpath.
     """
     gh = "https://github.com/cpeoples/cudabom/blob/main"
     raw = "https://raw.githubusercontent.com/cpeoples/cudabom/main/docs/assets/"
-    body = body.replace(raw, "/assets/")
+    body = body.replace(raw, assets_base())
     replacements = {
         "docs/architecture.md": "/architecture/",
         "docs/evidence-model.md": "/evidence-model/",

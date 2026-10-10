@@ -73,6 +73,10 @@ jobs:
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6.0.0
 
       - name: Generate content
+        # The script rewrites README brand-art paths to the Pages subpath, so it
+        # needs the same baseURL the Hugo build below uses.
+        env:
+          HUGO_BASEURL: ${{ steps.pages.outputs.base_url || '/' }}
         run: python3 .hugo/scripts/build_docs.py
 
       - name: Build site
