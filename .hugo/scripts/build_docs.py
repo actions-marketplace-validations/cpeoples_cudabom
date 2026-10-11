@@ -58,6 +58,124 @@ PROSE_PAGES = [
     (DOCS / "threat-model.md", "threat-model", "Threat model", 90),
 ]
 
+# Documentation link per fingerprinted component family. Most families follow
+# the convention https://docs.nvidia.com/cuda/<name>/, which component_doc_url
+# derives automatically, so a new family that follows it is linked with no code
+# change. Only families whose documentation lives elsewhere need an entry here;
+# the binary-utility tools share the CUDA Binary Utilities guide, and the nvpl-*
+# families live under the NVPL docs. The docs link-check (build_docs.py
+# --check-links, run in CI) verifies every resolved URL still returns 200, so
+# rot surfaces as a failing build rather than a dead link on the site.
+COMPONENT_DOC_OVERRIDES = {
+    "cudart": "https://docs.nvidia.com/cuda/cuda-runtime-api/",
+    "cudla": "https://docs.nvidia.com/cuda/cudla-api/",
+    "cudnn": "https://docs.nvidia.com/deeplearning/cudnn/",
+    "cufile": "https://docs.nvidia.com/gpudirect-storage/api-reference-guide/",
+    "cuobjclient": "https://docs.nvidia.com/cuda/cuda-binary-utilities/",
+    "cuobjdump": "https://docs.nvidia.com/cuda/cuda-binary-utilities/",
+    "cupti": "https://docs.nvidia.com/cupti/",
+    "cuxxfilt": "https://docs.nvidia.com/cuda/cuda-binary-utilities/",
+    "nccl": "https://docs.nvidia.com/deeplearning/nccl/",
+    "nvpl-blas": "https://docs.nvidia.com/nvpl/_static/blas/index.html",
+    "nvpl-fft": "https://docs.nvidia.com/nvpl/_static/fft/index.html",
+    "nvpl-lapack": "https://docs.nvidia.com/nvpl/_static/lapack/index.html",
+    "nvpl-rand": "https://docs.nvidia.com/nvpl/_static/rand/index.html",
+    "nvpl-scalapack": "https://docs.nvidia.com/nvpl/_static/scalapack/index.html",
+    "nvpl-sparse": "https://docs.nvidia.com/nvpl/_static/sparse/index.html",
+    "nvpl-tensor": "https://docs.nvidia.com/nvpl/_static/tensor/index.html",
+    "nvshmem": "https://docs.nvidia.com/nvshmem/api/",
+    "nvvm": "https://docs.nvidia.com/cuda/nvvm-ir-spec/",
+}
+
+
+def component_doc_url(name: str) -> str:
+    """NVIDIA documentation URL for a component family.
+
+    Families whose docs follow the common convention resolve to
+    https://docs.nvidia.com/cuda/<name>/ automatically; the rest come from
+    COMPONENT_DOC_OVERRIDES. Every URL is validated by `--check-links`.
+    """
+    return COMPONENT_DOC_OVERRIDES.get(name, f"https://docs.nvidia.com/cuda/{name}/")
+
+
+PACKAGE_KEY = re.compile(r"^(lib)?[a-z0-9]+(_[a-z0-9]+)*$")
+
+
+def best_description(variants: set[str]) -> str:
+    """Pick the most human-readable description among a family's variants.
+
+    NVIDIA labels the same component differently across releases: prose like
+    "CUDA cuBLAS" in some shards, the bare package key "libcublas" in others.
+    Prefer a variant that reads as a phrase (has a space and is not just a
+    package key), then the longest, so the table shows real descriptions.
+    """
+    if not variants:
+        return ""
+
+    def score(d: str) -> tuple[int, int]:
+        # Rank anything that is not a bare package key above those that are, so
+        # "cuDLA" beats "libcudla" even without a space; prefer longer within a
+        # rank so fuller phrases win.
+        return (0 if PACKAGE_KEY.match(d) else 1, len(d))
+
+    return max(variants, key=score)
+
+
+def component_families() -> set[str]:
+    """Every component family name present in the fingerprint shards."""
+    names: set[str] = set()
+    for shard in FINGERPRINTS.glob("*/redistrib_*.json"):
+        data = json.loads(shard.read_text(encoding="utf-8"))
+        for c in data.get("components", []):
+            name = c.get("name")
+            if name:
+                names.add(name)
+    return names
+
+
+def check_links() -> int:
+    """Verify every component's documentation URL still resolves (HTTP 200).
+
+    Run in CI so a convention change, a renamed NVIDIA page, or a newly
+    fingerprinted family with a broken derived URL fails the build instead of
+    shipping a dead link. Returns a process exit code.
+    """
+    import urllib.error
+    import urllib.request
+
+    families = sorted(component_families())
+    log(f"checking {len(families)} component documentation link(s)")
+    failures: list[tuple[str, str, str]] = []
+    for name in families:
+        url = component_doc_url(name)
+        status: object = None
+        for method in ("HEAD", "GET"):
+            req = urllib.request.Request(
+                url, method=method, headers={"User-Agent": "cudabom-docs-linkcheck"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    status = resp.status
+                break
+            except urllib.error.HTTPError as e:
+                status = e.code
+                if method == "HEAD":
+                    continue  # some servers reject HEAD; retry with GET
+            except Exception as e:  # noqa: BLE001 - report any transport error
+                status = str(e)
+                if method == "HEAD":
+                    continue
+        if status != 200:
+            failures.append((name, url, str(status)))
+            log(f"  FAIL {name}: {status}  {url}")
+        else:
+            log(f"  ok   {name}  {url}")
+    if failures:
+        log(f"{len(failures)} documentation link(s) did not return 200")
+        return 1
+    log("all component documentation links resolved")
+    return 0
+
 
 def log(msg: str) -> None:
     print(f"build_docs: {msg}", file=sys.stderr)
@@ -188,6 +306,7 @@ def gen_coverage() -> None:
     # Per tree: its releases; plus repo-wide rollups for the summary line.
     per_tree: list[tuple[str, list[tuple[str, str, int, int]]]] = []
     components: dict[str, int] = {}
+    descriptions: dict[str, set[str]] = {}
     total_hashes = 0
     total_releases = 0
     # Releases NVIDIA lists but that ship no fingerprintable library (the CUDA
@@ -204,8 +323,17 @@ def gen_coverage() -> None:
             comps = data.get("components", [])
             shard_hashes = 0
             for c in comps:
+                name = c.get("name", "?")
                 n = len(c.get("file_hashes", {}) or {})
-                components[c.get("name", "?")] = components.get(c.get("name", "?"), 0) + n
+                components[name] = components.get(name, 0) + n
+                desc = (c.get("description") or "").strip()
+                if desc:
+                    # NVIDIA's descriptions vary across releases: some shards
+                    # carry prose ("CUDA cuBLAS"), others only the raw package
+                    # key ("libcublas"). Collect every variant and pick the most
+                    # readable one at render time rather than letting shard order
+                    # decide.
+                    descriptions.setdefault(name, set()).add(desc)
                 shard_hashes += n
             if shard_hashes == 0:
                 empty_releases += 1
@@ -238,11 +366,13 @@ def gen_coverage() -> None:
         "recognize.\n",
         summary,
         "## Component families\n",
-        "| Component | File hashes |",
-        "|---|---|",
+        "| Component | Description | File hashes |",
+        "|---|---|---|",
     ]
     for name, n in sorted(components.items(), key=lambda kv: kv[0]):
-        lines.append(f"| `{name}` | {n:,} |")
+        url = component_doc_url(name)
+        desc = best_description(descriptions.get(name, set()))
+        lines.append(f"| [`{name}`]({url}) | {desc} | {n:,} |")
     lines += ["", "## Fingerprinted releases\n"]
     for tree_name, releases in per_tree:
         tree_hashes = sum(r[3] for r in releases)
@@ -452,6 +582,8 @@ def write_landing() -> None:
 
 
 def main() -> int:
+    if "--check-links" in sys.argv[1:]:
+        return check_links()
     if CONTENT.exists():
         shutil.rmtree(CONTENT)
     CONTENT.mkdir(parents=True)
