@@ -280,6 +280,15 @@ def copy_prose() -> int:
         body = src.read_text(encoding="utf-8")
         body = strip_badges(body)
         body = strip_leading_h1(body)
+        if slug == "overview":
+            # The README hero uses the dark GIF for dark mode; on the site's
+            # overview, use the transparent (panel + light text) GIF in dark
+            # mode so it sits on the page background, keeping the light GIF for
+            # light mode. The light <source> is unchanged.
+            body = body.replace(
+                "docs/assets/brand-mark-animated.gif",
+                "docs/assets/brand-mark-animated-transparent.gif",
+            )
         body = rewrite_repo_links(body)
         write_page(slug, front_matter(title, weight) + body)
         count += 1
