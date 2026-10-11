@@ -241,7 +241,7 @@ def gen_coverage() -> None:
         "| Component | File hashes |",
         "|---|---|",
     ]
-    for name, n in sorted(components.items(), key=lambda kv: (-kv[1], kv[0])):
+    for name, n in sorted(components.items(), key=lambda kv: kv[0]):
         lines.append(f"| `{name}` | {n:,} |")
     lines += ["", "## Fingerprinted releases\n"]
     for tree_name, releases in per_tree:
