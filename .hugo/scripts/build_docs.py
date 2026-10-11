@@ -445,7 +445,11 @@ def gen_advisories_stats() -> None:
 
     advs_sorted = sorted(
         advs,
-        key=lambda a: (sev_rank.get((a.get("severity") or "UNKNOWN").upper(), 99), a.get("id", "")),
+        key=lambda a: (
+            sev_rank.get((a.get("severity") or "UNKNOWN").upper(), 99),
+            -(a.get("cvss_score") or 0.0),  # highest CVSS first within a severity
+            a.get("id", ""),  # stable, deterministic tiebreaker
+        ),
     )
     lines += [
         "",
