@@ -46,6 +46,11 @@ home = ["HTML", "RSS"]
   # dark mode. The rest stay available in the theme switcher.
   themeVariant = ["relearn-dark", "zen-dark", "relearn-light", "relearn-bright", "zen-light"]
   collapsibleMenu = true
+  # Open external links (NVD/CVE advisory links, the GitHub repo, NVIDIA docs,
+  # etc.) in a new tab so a reader following a reference does not lose the docs
+  # page. Relearn applies this to every absolute-URL link site-wide, so the
+  # generated advisory/coverage tables need no per-link markup.
+  externalLinkTarget = "true"
   # Hide the topbar print button; the docs are read online, not printed.
   disablePrintButton = true
 
