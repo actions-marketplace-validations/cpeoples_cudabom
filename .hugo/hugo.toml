@@ -57,19 +57,10 @@ home = ["HTML", "RSS"]
   [params.author]
     name = "cudabom contributors"
 
-# Top navigation shortcuts (right-hand menu in Relearn).
+# Shortcuts menu (the "MORE" block). Reserved for external links; internal
+# pages already appear in the main navigation and should not be duplicated here.
 [[menu.shortcuts]]
   name = "<i class='fab fa-github'></i> GitHub repo"
   identifier = "ds"
   url = "https://github.com/cpeoples/cudabom"
   weight = 10
-
-[[menu.shortcuts]]
-  name = "<i class='fas fa-shield-halved'></i> Threat model"
-  url = "/threat-model/"
-  weight = 20
-
-[[menu.shortcuts]]
-  name = "<i class='fas fa-scale-balanced'></i> Comparison"
-  url = "/comparison/"
-  weight = 30
