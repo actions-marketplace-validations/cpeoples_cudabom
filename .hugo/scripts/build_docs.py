@@ -192,6 +192,20 @@ def front_matter(title: str, weight: int, extra: str = "") -> str:
 
 BADGES_BLOCK = re.compile(r"<!--\s*BADGES_START.*?BADGES_END\s*-->\s*", re.DOTALL)
 
+# The README brand hero is a <picture> element (GitHub honors
+# prefers-color-scheme). On the site we swap it for a theme-variant lockup so it
+# tracks Hugo's own light/dark toggle; see copy_prose. The asset URLs keep the
+# raw.githubusercontent base so rewrite_repo_links repoints them to the local
+# copies like every other README image.
+_RAW = "https://raw.githubusercontent.com/cpeoples/cudabom/main/docs/assets"
+BRAND_PICTURE_RE = re.compile(r"<picture>.*?</picture>", re.DOTALL)
+SITE_BRAND_HERO = (
+    f'<img class="brand-hero-dark" src="{_RAW}/brand-mark-animated-transparent.gif" '
+    'alt="CudaBOM" width="480" />'
+    f'<img class="brand-hero-light" src="{_RAW}/brand-mark-animated-light.gif" '
+    'alt="CudaBOM" width="480" />'
+)
+
 
 def strip_badges(body: str) -> str:
     """Drop the README badge block (shields.io images that only resolve against
@@ -281,14 +295,15 @@ def copy_prose() -> int:
         body = strip_badges(body)
         body = strip_leading_h1(body)
         if slug == "overview":
-            # The README hero uses the dark GIF for dark mode; on the site's
-            # overview, use the transparent (panel + light text) GIF in dark
-            # mode so it sits on the page background, keeping the light GIF for
-            # light mode. The light <source> is unchanged.
-            body = body.replace(
-                "docs/assets/brand-mark-animated.gif",
-                "docs/assets/brand-mark-animated-transparent.gif",
-            )
+            # The README hero is a <picture> keyed on prefers-color-scheme (the
+            # OS theme). On the site, the page background follows Hugo's own
+            # theme toggle, which <picture> cannot read, so the two can disagree
+            # (e.g. light page + transparent light-text mark = invisible text).
+            # Replace the whole <picture> with the brand-hero lockup used on the
+            # landing page: two imgs the theme-variant CSS shows/hides, so the
+            # mark always matches the page. Dark gets the transparent mark;
+            # light gets the light mark.
+            body = BRAND_PICTURE_RE.sub(SITE_BRAND_HERO, body, count=1)
         body = rewrite_repo_links(body)
         write_page(slug, front_matter(title, weight) + body)
         count += 1

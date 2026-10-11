@@ -29,6 +29,7 @@
 
 .R-sidebarmenu li.active > a {
   color: #76b900 !important;
+  font-weight: 700 !important;
 }
 
 /* Homepage brand-mark hero: the landing page leads with the wordmark art, so
