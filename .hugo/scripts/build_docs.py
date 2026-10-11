@@ -190,6 +190,11 @@ def gen_coverage() -> None:
     components: dict[str, int] = {}
     total_hashes = 0
     total_releases = 0
+    # Releases NVIDIA lists but that ship no fingerprintable library (the CUDA
+    # redist program predates the toolkit libraries: 11.0.3-11.4.1 carry only
+    # fabricmanager/nscq, no cublas/cudart/etc.). Counted and explained, but not
+    # shown as empty rows that would read as missing coverage.
+    empty_releases = 0
     for tree in trees:
         releases = []
         for shard in sorted(tree.glob("redistrib_*.json")):
@@ -202,6 +207,9 @@ def gen_coverage() -> None:
                 n = len(c.get("file_hashes", {}) or {})
                 components[c.get("name", "?")] = components.get(c.get("name", "?"), 0) + n
                 shard_hashes += n
+            if shard_hashes == 0:
+                empty_releases += 1
+                continue
             total_hashes += shard_hashes
             releases.append((label, rel.get("date", ""), len(comps), shard_hashes))
         if not releases:
@@ -210,6 +218,17 @@ def gen_coverage() -> None:
         total_releases += len(releases)
         per_tree.append((tree.name, releases))
 
+    summary = (
+        f"**{total_releases} releases** fingerprinted across "
+        f"**{len(per_tree)} product trees**, **{total_hashes:,} file hashes** "
+        f"across **{len(components)} component families**.\n"
+    )
+    if empty_releases:
+        summary += (
+            f"\n{empty_releases} earlier release(s) NVIDIA lists carry no "
+            "redistributable libraries (the CUDA redist program began at "
+            "11.4.2), so they hold no fingerprints and are omitted below.\n"
+        )
     lines = [
         front_matter("CUDA coverage", 20),
         "cudabom identifies CUDA components by matching an artifact's content "
@@ -217,9 +236,7 @@ def gen_coverage() -> None:
         "archives**. This page is generated from the committed fingerprint "
         "database, so it always reflects exactly what the current build can "
         "recognize.\n",
-        f"**{total_releases} releases** fingerprinted across "
-        f"**{len(per_tree)} product trees**, **{total_hashes:,} file hashes** "
-        f"across **{len(components)} component families**.\n",
+        summary,
         "## Component families\n",
         "| Component | File hashes |",
         "|---|---|",
