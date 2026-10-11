@@ -57,3 +57,16 @@
 #R-body-inner > .flex-block-wrapper article:has(.brand-hero) > h1:first-of-type {
   display: none;
 }
+
+/* "Built with" credits: GitHub renders the icon <a><img></a> list as a row,
+   but Relearn styles article images as block elements, which stacked each icon
+   on its own line. Scope the paragraph that follows the "Built with" heading to
+   a centered inline row so it matches the README. */
+h3#built-with + p {
+  text-align: center;
+}
+h3#built-with + p img {
+  display: inline;
+  vertical-align: middle;
+  margin: 0;
+}
