@@ -36,7 +36,11 @@ on:
         type: string
 
 concurrency:
-  group: fingerprint-refresh
+  # Key on the trigger so a manual workflow_dispatch and the nightly schedule
+  # do not cannibalize each other (static group => the later run self-cancels
+  # with cancel-in-progress: false). Two runs of the SAME event still serialize
+  # on the shared fingerprint-refresh branch, which is what we want.
+  group: fingerprint-refresh-${{ github.event_name }}
   cancel-in-progress: false
 
 permissions:
@@ -66,7 +70,36 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
+          # Persist REFRESH_PAT as the git/actor credential for the WHOLE run.
+          # This is what makes scheduled runs behave like workflow_dispatch:
+          # the fine-grained PAT (not the schedule's integration GITHUB_TOKEN)
+          # is unambiguously the actor that create-pull-request uses for its
+          # server-side signed-commit API calls (createTree/createCommit/
+          # createRef). Without this, schedule runs fail at create-a-reference
+          # with "Resource not accessible by personal access token".
+          persist-credentials: true
+          token: ${{ secrets.REFRESH_PAT }}
+
+      - name: Pre-flight (verify REFRESH_PAT can write to this repo)
+        # Fail fast in seconds if the token is missing/expired/under-scoped,
+        # instead of burning ~37m of derivation and only discovering the
+        # permission problem at the Open-pull-request step. We check that the
+        # PAT can read the repo with write-adjacent permission surfaced in the
+        # response; `permissions.push` must be true to create refs + open PRs.
+        env:
+          GH_TOKEN: ${{ secrets.REFRESH_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::REFRESH_PAT secret is empty or not injected into this run."
+            exit 1
+          fi
+          push=$(gh api repos/${{ github.repository }} --jq '.permissions.push' 2>/dev/null || echo "unknown")
+          echo "REFRESH_PAT effective push permission: ${push}"
+          if [ "${push}" != "true" ]; then
+            echo "::error::REFRESH_PAT lacks write (Contents: write + Pull requests: write) on ${{ github.repository }}. Fine-grained PATs must grant these to this repo and be authorized for the resource owner."
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal
