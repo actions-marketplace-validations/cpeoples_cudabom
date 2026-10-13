@@ -133,6 +133,12 @@ const EXCEPTIONS: &[Exception] = &[
         reason: "the legacy command-line profiler is documented in the Profiler User's Guide, \
                  whose slug shares no token with 'nvprof' so no template or crawl reaches it",
     },
+    Exception {
+        component: "compat",
+        url: "https://docs.nvidia.com/deploy/cuda-compatibility/",
+        reason: "the forward-compatibility package is documented in the CUDA Compatibility guide, \
+                 not a /cuda/compat/ slug the templates or crawl can derive",
+    },
 ];
 
 /// Known heading aliases: strings (besides the family name itself) that count as
@@ -169,12 +175,14 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         );
         let (resolved, unresolved) = resolve_all(&families);
         if !unresolved.is_empty() {
-            bail!(
-                "no documentation URL resolved for {} family/families: {}.\n\
-                 Each is a family whose docs live at a slug no template, parent \
-                 crawl, or guide-section anchor can derive. Add a reviewed entry \
-                 to EXCEPTIONS in xtask/src/doc_links.rs (with the proven URL and \
-                 the reason), then re-run.",
+            // Warn but still write: the refresh must open its PR so the gap
+            // surfaces as a failing `--check-links` there (and the shard diff is
+            // reviewable), not as a dead nightly job before any PR exists. The
+            // fix is a reviewed EXCEPTIONS entry with the proven URL.
+            status!(
+                "xtask: warning: no documentation URL resolved for {} family/families: {}. \
+                 build_docs.py --check-links will fail until each gets an EXCEPTIONS entry \
+                 in xtask/src/doc_links.rs.",
                 unresolved.len(),
                 unresolved.join(", ")
             );
