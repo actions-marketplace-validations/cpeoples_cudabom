@@ -631,6 +631,56 @@ def copy_docs_assets() -> None:
         log("seeded favicon/logo from cudabom-icon.svg -> static/images/")
 
 
+SITE_URL = "https://cpeoples.github.io/cudabom/"
+
+# Top-level site pages for the llms.txt index: (slug, title, one-line summary).
+# Ordered as a reader would approach the docs. The generated data pages
+# (coverage, advisory-coverage, cli) are included alongside the prose sections.
+LLMS_PAGES = [
+    ("overview", "Overview", "what cudabom is, what it proves, and how to start."),
+    ("cli", "CLI reference", "every command, flag, and output format, generated from the binary."),
+    ("coverage", "CUDA coverage", "the CUDA toolkits, libraries, and versions cudabom recognizes."),
+    ("advisory-coverage", "Advisory coverage", "which CUDA advisories map to the components cudabom identifies."),
+    ("comparison", "Comparison", "measured results against blint, Syft, and Trivy, with performance."),
+    ("architecture", "Architecture", "how extraction, fingerprinting, and derivation fit together."),
+    ("evidence-model", "Evidence model", "how a match becomes evidence-backed SBOM, advisory, and VEX data."),
+    ("policy", "Gate policy", "the pass/fail gate and how to configure it in CI."),
+    ("advisories", "Advisories", "the advisory data cudabom emits and where it comes from."),
+    ("sources", "Data sources", "the first-party NVIDIA sources behind the fingerprint database."),
+    ("threat-model", "Threat model", "what cudabom defends against and its trust boundaries."),
+]
+
+
+def write_llms_txt() -> None:
+    """Emit static/llms.txt: a plaintext page index for LLMs (llmstxt.org).
+
+    Mirrors the convention used by the sibling sites: an H1 title, a one-line
+    summary blockquote, and a Guides section of absolute links with short
+    descriptions. Written to static/ so Hugo copies it verbatim to the site
+    root, next to robots.txt (which points crawlers here via Allow: /). Absolute
+    URLs use the deploy baseURL so links resolve on the project Pages subpath,
+    falling back to the production URL for a local build.
+    """
+    deploy_base = os.environ.get("HUGO_BASEURL", "/").rstrip("/")
+    base = deploy_base if deploy_base else SITE_URL.rstrip("/")
+    lines = [
+        "# CudaBOM",
+        "",
+        "> Find the CUDA your SBOM missed: an open-source Rust CLI that proves "
+        "which NVIDIA CUDA software is inside an artifact (Python wheels, shared "
+        "libraries, executables, container images) and turns that evidence into "
+        "security-grade SBOM, advisory, and VEX data.",
+        "",
+        "## Guides",
+        "",
+    ]
+    lines += [
+        f"- [{title}]({base}/{slug}/): {summary}" for slug, title, summary in LLMS_PAGES
+    ]
+    (HUGO_DIR / "static" / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log("wrote static/llms.txt")
+
+
 def write_landing() -> None:
     # Front matter: a rich `description` for SEO and the sidebar, no `home`
     # archetype. The
@@ -668,6 +718,7 @@ def main() -> int:
     CONTENT.mkdir(parents=True)
     copy_docs_assets()
     write_landing()
+    write_llms_txt()
     copy_prose()
     gen_cli_reference()
     gen_coverage()
