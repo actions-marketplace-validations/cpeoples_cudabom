@@ -664,7 +664,19 @@ fn shard_missing_derivable_archive(
             // derived), so a `windows-x86_64` archive whose sha256 is absent
             // from provenance is expected, not stale: counting it would make
             // every shard perpetually stale and never self-terminate.
-            platform.starts_with("linux-") && !recorded.contains(&archive.sha256)
+            //
+            // `linux-all` is excluded for the same reason: it is NVIDIA's
+            // platform-agnostic *source* channel (e.g. `driver_assistant`, an
+            // MIT installer helper shipped only as `linux-all` source tarball),
+            // not one of the arch-specific binary targets the corpus fetches
+            // (`linux-x86_64`, `linux-sbsa`, `linux-aarch64`, `linux-ppc64le`).
+            // Its archive never enters `corpus_sha256`, so counting it would
+            // flag the shard stale forever and backfill would re-derive it to
+            // byte-identical output every run -- the exact dead-end that burned
+            // whole refresh runs without ever opening a PR.
+            platform.starts_with("linux-")
+                && platform != "linux-all"
+                && !recorded.contains(&archive.sha256)
         })
     })
 }
@@ -2137,6 +2149,48 @@ mod tests {
         assert!(
             !shard_missing_derivable_archive(&shard, from, "redistrib_12.6.0.json"),
             "a missing Windows-only archive must not mark a Linux-derived shard stale"
+        );
+    }
+
+    /// A `linux-all` source archive (NVIDIA's platform-agnostic source channel,
+    /// e.g. `driver_assistant`) is never fetched or derived on the arch-specific
+    /// binary corpus, so its sha256 can never enter provenance. It must NOT mark
+    /// a shard stale; otherwise a shard carrying such a component (every CUDA
+    /// toolkit release ships `driver_assistant`) would be perpetually stale and
+    /// backfill would re-derive it to byte-identical output every run.
+    #[test]
+    fn shard_missing_derivable_archive_ignores_linux_all_source_archives() {
+        let scratch = ScratchDir::new().unwrap();
+        let from = scratch.path();
+        let manifest = r#"{
+            "release_label": "12.8.0",
+            "cuda_nvtx": {
+                "name": "CUDA NVTX",
+                "license": "CUDA Toolkit",
+                "version": "12.8.37",
+                "linux-x86_64": {
+                    "relative_path": "cuda_nvtx/linux-x86_64/a.tar.xz",
+                    "sha256": "aaaa"
+                }
+            },
+            "driver_assistant": {
+                "name": "NVIDIA Driver Assistant",
+                "license": "MIT",
+                "version": "0.18.86.10",
+                "linux-all": {
+                    "relative_path": "driver_assistant/source/driver_assistant-0.18.86.10-archive.tar.xz",
+                    "sha256": "srcsrc"
+                }
+            }
+        }"#;
+        std::fs::write(from.join("redistrib_12.8.0.json"), manifest).unwrap();
+
+        // The real binary archive is recorded; only the `linux-all` source
+        // archive is "missing". That must not count, so the shard is NOT stale.
+        let shard = serde_json::json!({ "provenance": { "corpus_sha256": ["aaaa"] } });
+        assert!(
+            !shard_missing_derivable_archive(&shard, from, "redistrib_12.8.0.json"),
+            "a missing linux-all source archive must not mark a binary-derived shard stale"
         );
     }
 
