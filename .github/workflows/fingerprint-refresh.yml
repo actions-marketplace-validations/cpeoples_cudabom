@@ -39,6 +39,11 @@ on:
         required: false
         default: "9"
         type: string
+      shuffle:
+        description: "Shuffle the self-heal backlog so each run samples a different batch instead of the oldest-first front. Blank or 'false' keeps the deterministic order; 'true' seeds from the run id; any other value is used as a fixed seed."
+        required: false
+        default: "true"
+        type: string
 
 concurrency:
   # One static group for every trigger (nightly schedule AND manual
@@ -335,6 +340,11 @@ jobs:
         env:
           HEAL: ${{ inputs.heal || '9' }}
           JOBS: ${{ inputs.jobs || '4' }}
+          # Shuffle input -> a concrete seed (or empty to keep the oldest-first
+          # order). 'true' seeds from the run id so each nightly samples a
+          # different batch; any other non-empty, non-'false' value is a fixed,
+          # reproducible seed.
+          SHUFFLE: ${{ (inputs.shuffle == '' || inputs.shuffle == 'false') && '' || (inputs.shuffle == 'true' && github.run_id || inputs.shuffle) }}
         run: |
           set -euo pipefail
           # Independently of newly discovered releases, re-derive a bounded
@@ -361,8 +371,23 @@ jobs:
           # archive, its sha256 lands in provenance and it drops out of the set,
           # so the backlog drains to empty over successive nightly runs and this
           # step becomes a no-op.
+          #
+          # Pass the resolved seed through so a shuffled run samples across the
+          # whole backlog rather than always re-deriving the oldest-first front.
+          shuffle_args=()
+          if [ -n "${SHUFFLE:-}" ]; then
+            shuffle_args=(--shuffle "$SHUFFLE")
+          fi
+          # Record the exact batch this run will take in the run summary (an
+          # offline dry-run), so a no-PR run still shows what it looked at.
+          echo "### Self-heal batch" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo run --locked --quiet -p xtask -- fingerprints backfill \
-            --limit "$HEAL" --jobs "$JOBS" --corpus "$CORPUS_DIR"
+            --limit "$HEAL" "${shuffle_args[@]}" --dry-run \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo run --locked --quiet -p xtask -- fingerprints backfill \
+            --limit "$HEAL" "${shuffle_args[@]}" --jobs "$JOBS" --corpus "$CORPUS_DIR"
           # Belt-and-suspenders: backfill reclaims between shards, but ensure the
           # (gitignored) corpus is gone before the diff/PR steps regardless.
           rm -rf "${CORPUS_DIR:?}"/* 2>/dev/null || true

@@ -172,7 +172,7 @@ pub(crate) fn build(args: &[String]) -> Result<()> {
 
 /// `fingerprints backfill [--shards fingerprints] [--locks fingerprints]
 /// [--limit N] [--jobs N] [--corpus corpus] [--platform <p[,p...]>]
-/// [--keep-downloads]`
+/// [--keep-downloads] [--dry-run] [--shuffle [seed]]`
 ///
 /// Enrich *already-committed* shards that still lack the binary layer. The
 /// nightly `fingerprint-refresh` only ever processes **newly discovered**
@@ -204,6 +204,12 @@ pub(crate) fn backfill(args: &[String]) -> Result<()> {
     // and what the PyPI wheels ship) cuts a backfill run's download volume ~4×
     // without changing correctness for that platform. Omitted = every platform.
     let platforms = flag(args, "--platform");
+    let dry_run = crate::has_flag(args, "--dry-run");
+    // Optional shuffle so successive runs sample different parts of the backlog
+    // instead of always re-walking the oldest-first front. Bare `--shuffle`
+    // seeds from the clock; `--shuffle <seed>` is reproducible, so a --dry-run
+    // preview matches the real run that reuses the same seed.
+    let shuffle_seed = resolve_shuffle_seed(args);
 
     // 1. Find committed shards that are stale against the current derivation
     //    logic. A shard is stale when EITHER it still lacks the binary layer
@@ -214,11 +220,30 @@ pub(crate) fn backfill(args: &[String]) -> Result<()> {
     //    `sanitizer_api`, folded cuDNN JIT, ...). Both are content-based and
     //    self-terminating: once a shard is re-derived with the archive present,
     //    its sha256 lands in provenance and the shard is no longer selected.
-    let candidates = stale_shards(Path::new(&shards_dir));
+    let mut candidates = stale_shards(Path::new(&shards_dir));
     if candidates.is_empty() {
         status!(
             "xtask: fingerprints backfill: all committed shards are current with the derivation logic"
         );
+        return Ok(());
+    }
+    if let Some(seed) = shuffle_seed {
+        shuffle_in_place(&mut candidates, seed);
+    }
+
+    // --dry-run: report the stale backlog and the batch this run would take,
+    //    without fetching or deriving anything. Offline and fast, so it is safe
+    //    to call as a pre-check (locally or in CI) to decide whether a full run
+    //    is worth its download cost.
+    if dry_run {
+        status!(
+            "xtask: fingerprints backfill --dry-run: {} stale shard(s); next {} this run:",
+            candidates.len(),
+            limit.min(candidates.len())
+        );
+        for shard in candidates.iter().take(limit) {
+            status!("xtask:   {} {}", shard.product, shard.label);
+        }
         return Ok(());
     }
     status!(
@@ -442,6 +467,43 @@ fn recover_base_url(
         }
     }
     None
+}
+
+/// Resolve the backfill shuffle seed from args: `None` when `--shuffle` is
+/// absent, a parsed seed for `--shuffle <seed>`, or a clock-derived seed for a
+/// bare `--shuffle`.
+fn resolve_shuffle_seed(args: &[String]) -> Option<u64> {
+    if !crate::has_flag(args, "--shuffle") {
+        return None;
+    }
+    let seed = flag(args, "--shuffle")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            u64::try_from(nanos & u128::from(u64::MAX)).unwrap_or(0)
+        });
+    Some(seed)
+}
+
+/// Shuffle `items` in place with a seeded xorshift64* generator and Fisher-Yates.
+/// Dependency-free and deterministic for a given seed, so a `--dry-run` preview
+/// and the real run that reuses the seed select the same batch.
+fn shuffle_in_place<T>(items: &mut [T], seed: u64) {
+    let mut state = seed | 1;
+    let mut next = || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    };
+    for i in (1..items.len()).rev() {
+        // next() is u64; reduce modulo (i+1) which is <= items.len(), so the
+        // result always fits usize. try_from keeps clippy's truncation lint happy.
+        let j = usize::try_from(next() % (i as u64 + 1)).unwrap_or(0);
+        items.swap(i, j);
+    }
 }
 
 /// Find committed shards that are stale against the current derivation logic,
