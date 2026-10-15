@@ -662,13 +662,33 @@ fn shard_missing_derivable_archive(
         .unwrap_or_default();
 
     manifest.components.values().any(|component| {
-        if cudabom_identify::license_is_excluded(component.license.as_deref()) {
+        if cudabom_identify::license_is_excluded(component.license.as_deref())
+            || component_ships_only_driver_stub(&component.key)
+        {
             return false;
         }
         component.archives.iter().any(|(platform, archive)| {
             is_derivable_binary_platform(platform) && !recorded.contains(&archive.sha256)
         })
     })
+}
+
+/// True for redist component keys whose archive ships only a cross-cutting
+/// driver stub the builder deliberately drops, so re-deriving never records the
+/// archive's sha256 in provenance.
+///
+/// `cuda_compat` (CUDA Forward Compatibility) is the case in point: it is
+/// licensed "CUDA Toolkit" (so the license gate keeps it) but ships only
+/// `libcuda.so`, which [`is_bundled_driver_stub`] strips as a bundled driver
+/// stub. Its sha256 therefore never enters `corpus_sha256`, so counting its
+/// archive as a derivable gap flags every CUDA 13.x shard stale forever and
+/// makes backfill re-derive them to byte-identical output every run -- the same
+/// dead-end as `linux-all` source archives and legacy driver-only manifests.
+///
+/// `cuda_compat_orin` (the Tegra forward-compat package) is intentionally NOT
+/// listed: it derives a real `compat_orin` component and must keep healing.
+fn component_ships_only_driver_stub(key: &str) -> bool {
+    key == "cuda_compat"
 }
 
 /// True when `platform` is one of the arch-specific Linux binary targets the
@@ -709,6 +729,7 @@ fn manifest_has_derivable_archive(fixtures_from: &Path, manifest_file: &str) -> 
     };
     manifest.components.values().any(|component| {
         !cudabom_identify::license_is_excluded(component.license.as_deref())
+            && !component_ships_only_driver_stub(&component.key)
             && component
                 .archives
                 .keys()
@@ -2291,6 +2312,56 @@ mod tests {
         assert!(
             !manifest_has_derivable_archive(from, "redistrib_driver.json"),
             "a manifest with only excluded driver archives is not derivable"
+        );
+    }
+
+    /// `cuda_compat` (CUDA Forward Compatibility) is licensed "CUDA Toolkit" --
+    /// so the license gate keeps it -- but ships only `libcuda.so`, which the
+    /// builder strips as a bundled driver stub. Its sha256 never enters
+    /// provenance, so counting its archive as a derivable gap flags every CUDA
+    /// 13.x shard stale forever. The staleness check must skip it (while still
+    /// flagging a genuinely-missing toolkit library in the same manifest).
+    #[test]
+    fn shard_missing_derivable_archive_ignores_cuda_compat_driver_stub() {
+        let scratch = ScratchDir::new().unwrap();
+        let from = scratch.path();
+        let manifest = r#"{
+            "release_label": "13.1.0",
+            "cuda_compat": {
+                "name": "CUDA Forward Compatability",
+                "license": "CUDA Toolkit",
+                "version": "590.44.01",
+                "linux-x86_64": {
+                    "relative_path": "cuda_compat/linux-x86_64/c.tar.xz",
+                    "sha256": "compat1"
+                }
+            },
+            "cuda_nvtx": {
+                "name": "CUDA NVTX",
+                "license": "CUDA Toolkit",
+                "version": "13.1.0",
+                "linux-x86_64": {
+                    "relative_path": "cuda_nvtx/linux-x86_64/a.tar.xz",
+                    "sha256": "aaaa"
+                }
+            }
+        }"#;
+        std::fs::write(from.join("redistrib_13.1.0.json"), manifest).unwrap();
+
+        // Only the cuda_compat archive is "missing"; the real nvtx archive is
+        // recorded. cuda_compat must not count, so the shard is NOT stale.
+        let shard = serde_json::json!({ "provenance": { "corpus_sha256": ["aaaa"] } });
+        assert!(
+            !shard_missing_derivable_archive(&shard, from, "redistrib_13.1.0.json"),
+            "a missing cuda_compat driver-stub archive must not mark a shard stale"
+        );
+
+        // But a genuinely-missing toolkit library (nvtx) IS still flagged.
+        let shard_missing_nvtx =
+            serde_json::json!({ "provenance": { "corpus_sha256": ["compat1"] } });
+        assert!(
+            shard_missing_derivable_archive(&shard_missing_nvtx, from, "redistrib_13.1.0.json"),
+            "a genuinely missing toolkit library must still mark the shard stale"
         );
     }
 
