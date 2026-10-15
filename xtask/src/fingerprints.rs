@@ -514,7 +514,11 @@ fn shuffle_in_place<T>(items: &mut [T], seed: u64) {
 ///
 /// 1. **Manifest-only**: no `provenance.corpus_sha256` and no component
 ///    build-ids: the pre-binary-layer state (older releases committed before
-///    binary-layer derivation existed, or whose archives never fetched).
+///    binary-layer derivation existed, or whose archives never fetched) -- but
+///    only when the source manifest still offers a derivable archive to enrich
+///    it with. Legacy driver-only manifests (CUDA 11 `fabricmanager` /
+///    `libnvidia_nscq` in the old schema) have nothing fetchable, so they are
+///    not flagged: re-deriving them would produce no change.
 /// 2. **Missing a derivable archive**: the shard's *source* manifest (under
 ///    `fixtures/`) declares a component whose redist `license` is NOT excluded
 ///    and whose archive sha256 is absent from the shard's recorded
@@ -595,9 +599,13 @@ fn stale_shards(shards_dir: &Path) -> Vec<ShardRef> {
             .unwrap_or_default()
             .to_string();
 
-        // A manifest-only shard is always stale. An enriched shard is stale
-        // only if its source manifest offers a derivable archive it lacks.
-        let is_stale = manifest_only
+        // A manifest-only shard is stale only if its source manifest offers a
+        // derivable archive to enrich it with (legacy driver-only manifests
+        // have nothing fetchable, so re-deriving them is a guaranteed no-op).
+        // An enriched shard is stale only if its source manifest offers a
+        // derivable archive it lacks.
+        let is_stale = (manifest_only
+            && manifest_has_derivable_archive(Path::new(&fixtures_from), &manifest_file))
             || shard_missing_derivable_archive(&value, Path::new(&fixtures_from), &manifest_file);
         if !is_stale {
             continue;
@@ -658,26 +666,53 @@ fn shard_missing_derivable_archive(
             return false;
         }
         component.archives.iter().any(|(platform, archive)| {
-            // Only platforms the pipeline actually derives from count. The
-            // fingerprint corpus is Linux-only (the committed locks pin
-            // `linux-*` archives; Windows `.zip`s are never fetched or
-            // derived), so a `windows-x86_64` archive whose sha256 is absent
-            // from provenance is expected, not stale: counting it would make
-            // every shard perpetually stale and never self-terminate.
-            //
-            // `linux-all` is excluded for the same reason: it is NVIDIA's
-            // platform-agnostic *source* channel (e.g. `driver_assistant`, an
-            // MIT installer helper shipped only as `linux-all` source tarball),
-            // not one of the arch-specific binary targets the corpus fetches
-            // (`linux-x86_64`, `linux-sbsa`, `linux-aarch64`, `linux-ppc64le`).
-            // Its archive never enters `corpus_sha256`, so counting it would
-            // flag the shard stale forever and backfill would re-derive it to
-            // byte-identical output every run -- the exact dead-end that burned
-            // whole refresh runs without ever opening a PR.
-            platform.starts_with("linux-")
-                && platform != "linux-all"
-                && !recorded.contains(&archive.sha256)
+            is_derivable_binary_platform(platform) && !recorded.contains(&archive.sha256)
         })
+    })
+}
+
+/// True when `platform` is one of the arch-specific Linux binary targets the
+/// fingerprint corpus actually fetches and derives from.
+///
+/// The corpus is Linux-only (the committed locks pin `linux-*` archives;
+/// Windows `.zip`s are never fetched), so Windows platforms never count. And
+/// `linux-all` -- NVIDIA's platform-agnostic *source* channel (e.g.
+/// `driver_assistant`, an MIT installer helper shipped only as a `linux-all`
+/// source tarball) -- is excluded too: it is not one of the arch-specific
+/// binary targets (`linux-x86_64`, `linux-sbsa`, `linux-aarch64`,
+/// `linux-ppc64le`), so its archive never enters `corpus_sha256`. Counting
+/// either would flag a shard stale forever and make backfill re-derive it to
+/// byte-identical output every run -- the dead-end that burned whole refresh
+/// runs without opening a PR.
+fn is_derivable_binary_platform(platform: &str) -> bool {
+    platform.starts_with("linux-") && platform != "linux-all"
+}
+
+/// True when the shard's *source* manifest offers at least one archive the
+/// pipeline can actually fetch and derive from: a non-excluded component with a
+/// binary-platform archive (see [`is_derivable_binary_platform`]).
+///
+/// This gates the `manifest_only` staleness branch. A manifest-only shard is
+/// only worth backfilling if there is something fetchable to enrich it with.
+/// Legacy CUDA 11 manifests (e.g. `redistrib_11.0.3.json`) carry only
+/// driver-licensed components (`fabricmanager`, `libnvidia_nscq`) in an older
+/// schema with no derivable archives, so re-deriving them produces no change.
+/// Treating them as stale flagged nine shards forever and made the oldest-first
+/// backfill batch a guaranteed no-op.
+fn manifest_has_derivable_archive(fixtures_from: &Path, manifest_file: &str) -> bool {
+    let manifest_path = fixtures_from.join(manifest_file);
+    let Ok(bytes) = std::fs::read(&manifest_path) else {
+        return false;
+    };
+    let Ok(manifest) = RedistManifest::from_json(&bytes) else {
+        return false;
+    };
+    manifest.components.values().any(|component| {
+        !cudabom_identify::license_is_excluded(component.license.as_deref())
+            && component
+                .archives
+                .keys()
+                .any(|platform| is_derivable_binary_platform(platform))
     })
 }
 
@@ -2191,6 +2226,71 @@ mod tests {
         assert!(
             !shard_missing_derivable_archive(&shard, from, "redistrib_12.8.0.json"),
             "a missing linux-all source archive must not mark a binary-derived shard stale"
+        );
+    }
+
+    /// `manifest_has_derivable_archive` gates the manifest-only staleness
+    /// branch. A legacy driver-only manifest (CUDA 11 `fabricmanager`, in the
+    /// old schema with no sha256 archives) offers nothing fetchable, so a
+    /// manifest-only shard built from it must NOT be flagged stale: backfill
+    /// would fetch nothing and re-derive it unchanged, a guaranteed no-op.
+    #[test]
+    fn manifest_has_derivable_archive_rejects_legacy_driver_only_manifests() {
+        let scratch = ScratchDir::new().unwrap();
+        let from = scratch.path();
+
+        // Legacy CUDA 11 schema: top-level key -> version -> platform -> bare
+        // path string. No `license`, no `sha256`: nothing the pipeline fetches.
+        let legacy = r#"{
+            "fabricmanager": {
+                "450.51.06": {
+                    "linux-x86_64": "fabricmanager/linux-x86_64/fabricmanager-linux-x86_64-450.51.06.tar.gz"
+                }
+            }
+        }"#;
+        std::fs::write(from.join("redistrib_11.0.3.json"), legacy).unwrap();
+        assert!(
+            !manifest_has_derivable_archive(from, "redistrib_11.0.3.json"),
+            "a legacy driver-only manifest offers no derivable archive"
+        );
+
+        // Modern manifest with a non-excluded binary archive IS derivable.
+        let modern = r#"{
+            "release_label": "13.1.0",
+            "cuda_nvtx": {
+                "name": "CUDA NVTX",
+                "license": "CUDA Toolkit",
+                "version": "13.1.0",
+                "linux-x86_64": {
+                    "relative_path": "cuda_nvtx/linux-x86_64/a.tar.xz",
+                    "sha256": "aaaa"
+                }
+            }
+        }"#;
+        std::fs::write(from.join("redistrib_13.1.0.json"), modern).unwrap();
+        assert!(
+            manifest_has_derivable_archive(from, "redistrib_13.1.0.json"),
+            "a modern manifest with a non-excluded binary archive is derivable"
+        );
+
+        // A manifest offering ONLY an excluded (driver) binary archive is not
+        // derivable: the builder would drop it, so there is nothing to gain.
+        let driver_only = r#"{
+            "release_label": "13.1.0",
+            "nvidia_driver": {
+                "name": "NVIDIA Driver",
+                "license": "NVIDIA Driver",
+                "version": "560.0",
+                "linux-x86_64": {
+                    "relative_path": "nvidia_driver/linux-x86_64/d.tar.xz",
+                    "sha256": "dddd"
+                }
+            }
+        }"#;
+        std::fs::write(from.join("redistrib_driver.json"), driver_only).unwrap();
+        assert!(
+            !manifest_has_derivable_archive(from, "redistrib_driver.json"),
+            "a manifest with only excluded driver archives is not derivable"
         );
     }
 
