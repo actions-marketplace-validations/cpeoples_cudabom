@@ -590,10 +590,32 @@ fn classify(name: &str, url: &str) -> Classification {
     let text = String::from_utf8_lossy(&body);
     let headings = extract_headings(&text);
     if headings.is_empty() {
+        // 200 with no heading text. This is normally a JS shell (cuquantum /
+        // cutensor render client side). But a transient partial fetch of a
+        // genuinely server-rendered page (observed on docs.nvidia.com/cuda/
+        // slugs) also yields no headings, and misclassifying it as a shell
+        // demotes the canonical docs link below a developer.nvidia.com landing
+        // page. Retry the canonical CUDA doc slugs once: a real page recovers
+        // its title/headings, a true shell stays empty and classifies Blank.
+        if is_canonical_cuda_doc_url(url) {
+            if let Ok(body) = fetch(url) {
+                let text = String::from_utf8_lossy(&body);
+                let headings = extract_headings(&text);
+                if !headings.is_empty() {
+                    return classify_headings(name, &headings);
+                }
+            }
+        }
         // 200 with no heading text: a JS shell (cuquantum/cutensor render client
         // side). We cannot read a name, but the slug matched and returned 200.
         return Classification::Blank;
     }
+    classify_headings(name, &headings)
+}
+
+/// Classify a page from its already-extracted headings: VALID when a heading
+/// names the family, MISMATCH when headings exist but name something else.
+fn classify_headings(name: &str, headings: &[String]) -> Classification {
     let needles = name_needles(name);
     let haystack: String = headings.join(" \u{1}");
     let norm_hay = normalize(&haystack);
@@ -604,6 +626,14 @@ fn classify(name: &str, url: &str) -> Classification {
         // else. Downgrade so a loose template never records a wrong page.
         Classification::Mismatch
     }
+}
+
+/// True for the canonical `docs.nvidia.com/cuda/<name>/` documentation slug, the
+/// authoritative API-docs layout. Used to retry an empty-heading fetch once
+/// before classifying it as a client-rendered shell, so a transient partial
+/// fetch does not demote a real docs page below a developer-site landing page.
+fn is_canonical_cuda_doc_url(url: &str) -> bool {
+    url.starts_with("https://docs.nvidia.com/cuda/")
 }
 
 /// The normalized strings that count as naming `name`: the family name itself
@@ -871,6 +901,39 @@ mod tests {
         let needles = name_needles("cudart");
         assert!(needles.contains(&"cudart".to_string()));
         assert!(needles.contains(&"cuda runtime".to_string()));
+    }
+
+    #[test]
+    fn classify_headings_valid_mismatch() {
+        // A heading naming the family validates.
+        assert!(matches!(
+            classify_headings("cudss", &["NVIDIA cuDSS (Preview)".to_string()]),
+            Classification::Valid
+        ));
+        // Headings that name something else are a mismatch, never valid.
+        assert!(matches!(
+            classify_headings("cudss", &["Some Other Library".to_string()]),
+            Classification::Mismatch
+        ));
+    }
+
+    #[test]
+    fn canonical_cuda_doc_url_only_matches_docs_cuda_tree() {
+        // The authoritative API-docs slug that earns a retry on an empty fetch.
+        assert!(is_canonical_cuda_doc_url(
+            "https://docs.nvidia.com/cuda/cudss/"
+        ));
+        assert!(is_canonical_cuda_doc_url(
+            "https://docs.nvidia.com/cuda/cublas/"
+        ));
+        // The developer landing page is NOT canonical: a Blank there is a real
+        // marketing shell and must not trigger the docs-page retry.
+        assert!(!is_canonical_cuda_doc_url(
+            "https://developer.nvidia.com/cudss"
+        ));
+        assert!(!is_canonical_cuda_doc_url(
+            "https://docs.nvidia.com/deeplearning/cudnn/"
+        ));
     }
 
     #[test]
