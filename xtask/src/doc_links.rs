@@ -139,6 +139,15 @@ const EXCEPTIONS: &[Exception] = &[
         reason: "the forward-compatibility package is documented in the CUDA Compatibility guide, \
                  not a /cuda/compat/ slug the templates or crawl can derive",
     },
+    Exception {
+        component: "cudss",
+        url: "https://docs.nvidia.com/cuda/cudss/",
+        reason: "the /cuda/cudss/ docs page is correct and server-rendered, but NVIDIA's CDN \
+                 intermittently serves CI runners a heading-less interstitial/shell for it; \
+                 live discovery then misreads it as a client-rendered shell and falls through \
+                 to the developer.nvidia.com/cudss landing page, opening a doc-link-downgrade \
+                 PR (seen twice). Pin the known-good docs URL so the sidecar never re-derives it",
+    },
 ];
 
 /// Known heading aliases: strings (besides the family name itself) that count as

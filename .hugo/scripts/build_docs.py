@@ -74,9 +74,10 @@ COMPONENT_DOCS_SIDECAR = REPO / "advisories" / "component-docs.json"
 
 COMPONENT_DOC_OVERRIDES = {
     # Offline fallback used only when the generated sidecar is missing. The first
-    # seven mirror xtask doc_links::EXCEPTIONS (pages at a path no template or
-    # crawl derives). The last two (cuobjdump, cu++filt) are discovered live by
-    # xtask from the Binary Utilities guide's Sphinx inventory; they are repeated
+    # eight mirror xtask doc_links::EXCEPTIONS (pages at a path no template or
+    # crawl derives, plus cudss whose CDN serves CI an interstitial). The last
+    # two (cuobjdump, cu++filt) are discovered live by xtask from the Binary
+    # Utilities guide's Sphinx inventory; they are repeated
     # here only so static generation still links correctly without the sidecar.
     "cudart": "https://docs.nvidia.com/cuda/cuda-runtime-api/",
     "cufile": "https://docs.nvidia.com/gpudirect-storage/api-reference-guide/#cufile-api-specification",
@@ -85,6 +86,7 @@ COMPONENT_DOC_OVERRIDES = {
     "compat_orin": "https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/",
     "nvprof": "https://docs.nvidia.com/cuda/profiler-users-guide/",
     "compat": "https://docs.nvidia.com/deploy/cuda-compatibility/",
+    "cudss": "https://docs.nvidia.com/cuda/cudss/",
     "cuobjdump": "https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html#cuobjdump",
     "cuxxfilt": "https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html#cuplusplusfilt",
 }

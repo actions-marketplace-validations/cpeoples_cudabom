@@ -499,9 +499,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           # Distinct product trees touched (added + healed), for the title.
+          # Empty on a pure-maintenance run (only sidecars changed, no shards),
+          # in which case the title omits the "(products)" suffix rather than
+          # repeating the "maintenance" fallback as "maintenance (maintenance)".
           products="$( { printf '%s\n' "${added[@]}"; printf '%s\n' "${healed[@]}"; } \
             | awk 'NF{print $1}' | sort -u | paste -sd', ' -)"
-          echo "products=${products:-maintenance}" >> "$GITHUB_OUTPUT"
+          echo "products=$products" >> "$GITHUB_OUTPUT"
 
           # A compact human summary for the PR title: "add N / re-derive M".
           summary=""
@@ -513,6 +516,15 @@ jobs:
           [ -z "$summary" ] && summary="maintenance"
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
 
+          # Title: append "(products)" only when at least one product tree was
+          # touched; a pure-maintenance run is just "chore(fingerprints): maintenance".
+          if [ -n "$products" ]; then
+            title="chore(fingerprints): ${summary} (${products})"
+          else
+            title="chore(fingerprints): ${summary}"
+          fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
       - name: Open pull request
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
@@ -520,8 +532,8 @@ jobs:
           token: ${{ secrets.REFRESH_PAT }}
           branch: fingerprint-refresh
           base: main
-          commit-message: "chore(fingerprints): ${{ steps.diff.outputs.summary }} (${{ steps.diff.outputs.products }})"
-          title: "chore(fingerprints): ${{ steps.diff.outputs.summary }} (${{ steps.diff.outputs.products }})"
+          commit-message: "${{ steps.diff.outputs.title }}"
+          title: "${{ steps.diff.outputs.title }}"
           add-paths: |
             ${{ env.SHARD_DIR }}
             ${{ env.FIXTURES_DIR }}
