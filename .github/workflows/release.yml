@@ -434,7 +434,47 @@ jobs:
               echo "::endgroup::"
               continue
             fi
-            cargo publish --locked --allow-dirty -p "$crate"
+            # Publish with retry/backoff. crates.io rate-limits the creation of
+            # new crate names (roughly one per ten minutes after an initial
+            # burst); a 429 there is expected when a workspace introduces many
+            # new crates at once. On 429 we honor the "try again after" time
+            # from the response, otherwise we back off exponentially. Any other
+            # error fails immediately. The cap keeps a stuck job from hanging
+            # past the GitHub Actions step timeout.
+            attempt=1
+            max_attempts=8
+            backoff=60
+            while true; do
+              out="$(cargo publish --locked --allow-dirty -p "$crate" 2>&1)" && { echo "$out"; break; }
+              echo "$out"
+              if echo "$out" | grep -q "429 Too Many Requests"; then
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                  echo "giving up on $crate after $attempt rate-limited attempts"
+                  exit 1
+                fi
+                # Prefer the server's reset time: "try again after <RFC2822 date>".
+                reset="$(echo "$out" | sed -nE 's/.*try again after ([^.]*GMT).*/\1/p' | head -1)"
+                wait=0
+                if [ -n "$reset" ]; then
+                  reset_epoch="$(date -u -d "$reset" +%s 2>/dev/null || echo 0)"
+                  now_epoch="$(date -u +%s)"
+                  if [ "$reset_epoch" -gt "$now_epoch" ]; then
+                    wait=$(( reset_epoch - now_epoch + 15 ))
+                  fi
+                fi
+                if [ "$wait" -le 0 ]; then
+                  wait="$backoff"
+                  backoff=$(( backoff * 2 ))
+                  [ "$backoff" -gt 900 ] && backoff=900
+                fi
+                echo "rate limited publishing $crate; waiting ${wait}s (attempt ${attempt}/${max_attempts})"
+                sleep "$wait"
+                attempt=$(( attempt + 1 ))
+                continue
+              fi
+              echo "non-retryable error publishing $crate"
+              exit 1
+            done
             # Wait for the new version to land on the sparse index so the
             # next crate that depends on it can resolve it.
             for _ in $(seq 1 30); do
