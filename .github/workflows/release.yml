@@ -229,7 +229,10 @@ jobs:
   sign-and-attest:
     name: SBOM, sign, and attach
     needs: build
-    if: github.event_name == 'release'
+    # Run on a release (to attach assets) and on a manual dispatch (to rehearse
+    # the SBOM + signing path). The attach-to-release step is release-only, so a
+    # dispatch builds and signs without needing a release to upload to.
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -258,8 +261,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sbom
-          # Spec version 1.6 per the project's SBOM target.
-          cargo cyclonedx --format json --spec-version 1.6 --all
+          # cargo-cyclonedx 0.5.9 (its latest) supports CycloneDX up to 1.5;
+          # it has no 1.6 emitter yet, so 1.6 here fails with "Unsupported Spec
+          # Version". This is the Cargo-dependency SBOM for the release; the 1.6
+          # output cudabom itself emits comes from cudabom-sbom.
+          cargo cyclonedx --format json --spec-version 1.5 --all
           # cargo-cyclonedx writes <crate>.cdx.json next to each manifest; the
           # CLI crate's SBOM is the shipped-binary bill of materials.
           cp crates/cudabom/cudabom.cdx.json "sbom/${RELEASE_TAG}.cdx.json"
@@ -277,6 +283,7 @@ jobs:
           inputs: ./dist/*.tar.gz ./dist/*.zip ./sbom/*.cdx.json
 
       - name: Attach signed artifacts, SBOM, and signatures to release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -295,7 +302,10 @@ jobs:
   data-bundle:
     name: Build and attach the data bundle
     needs: build
-    if: github.event_name == 'release'
+    # Run on a release (to attach the bundle) and on a manual dispatch (to
+    # rehearse the bundle build + signing). The attach-to-release step is
+    # release-only.
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -324,7 +334,7 @@ jobs:
       # function of the committed data and the tag.
       - name: Build data bundle
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || 'dryrun' }}
         run: cargo run --locked -p xtask -- bundle --tag "${RELEASE_TAG}" --out dist
 
       - name: Sign the data bundle with Sigstore
@@ -333,6 +343,7 @@ jobs:
           inputs: ./dist/cudabom-data-*.tar.gz
 
       - name: Attach the data bundle to the release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -353,6 +364,12 @@ jobs:
     # leaf crates, then cudabom. See RELEASING.md.
     if: github.event_name == 'release' && vars.PUBLISH_CRATES == 'true'
     runs-on: ubuntu-latest
+    # Gated by the crates-io environment's required reviewer, so a release
+    # pauses for manual approval before publishing, matching the pypi,
+    # snapcraft, and homebrew-tap environments.
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/cudabom
     permissions:
       contents: read
 
