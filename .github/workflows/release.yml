@@ -299,6 +299,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Sigstore keyless signing mints a short-lived OIDC token; without this
+      # the sign step fails with ACTIONS_ID_TOKEN_REQUEST_TOKEN unset. Matches
+      # the sign-and-attest job that signs the release archives and SBOM.
+      id-token: write
 
     steps:
       - name: Harden Runner
