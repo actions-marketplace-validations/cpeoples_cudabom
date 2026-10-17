@@ -399,16 +399,51 @@ jobs:
       - name: Publish workspace in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          # Topological order: every crate appears after all of its
+          # intra-workspace dependencies.
+          #   cudabom-core, cudabom-fetch, cudabom-fatbin : no workspace deps
+          #   cudabom-elf/extract/pe/policy/report/sbom   : need cudabom-core
+          #   cudabom-advisory                            : needs core + fetch
+          #   cudabom-identify                            : needs core + elf + fatbin + pe
+          #   cudabom                                     : needs all of the above
           for crate in \
             cudabom-core \
             cudabom-fetch \
-            cudabom-extract cudabom-elf cudabom-fatbin cudabom-identify \
-            cudabom-advisory cudabom-sbom cudabom-report cudabom-policy \
+            cudabom-fatbin \
+            cudabom-elf \
+            cudabom-extract \
+            cudabom-pe \
+            cudabom-policy \
+            cudabom-report \
+            cudabom-sbom \
+            cudabom-advisory \
+            cudabom-identify \
             cudabom; do
             echo "::group::publish $crate"
+            # Idempotent: if this crate+version is already on the index
+            # (for example from a partially completed earlier run), skip it
+            # instead of failing with "crate version already exists".
+            index_path="$(echo "$crate" | sed -E 's|^(..)(..).*|\1/\2|')/$crate"
+            if curl -sf "https://index.crates.io/${index_path}" \
+                 | grep -q "\"vers\":\"${version}\""; then
+              echo "$crate v${version} already published; skipping"
+              echo "::endgroup::"
+              continue
+            fi
             cargo publish --locked --allow-dirty -p "$crate"
+            # Wait for the new version to land on the sparse index so the
+            # next crate that depends on it can resolve it.
+            for _ in $(seq 1 30); do
+              if curl -sf "https://index.crates.io/${index_path}" \
+                   | grep -q "\"vers\":\"${version}\""; then
+                break
+              fi
+              sleep 5
+            done
             echo "::endgroup::"
           done
 
