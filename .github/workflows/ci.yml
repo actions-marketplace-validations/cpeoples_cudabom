@@ -283,3 +283,34 @@ jobs:
             cargo +nightly fuzz run "$t" -- -runs=50000 -max_total_time=60
             echo "::endgroup::"
           done
+
+  # Build the snap the Release workflow publishes to the Snap Store, without
+  # publishing it. Mirrors release.yml's publish-snap build step (same pinned
+  # action, same snap/.version stamping) so a snapcraft.yaml error (a bad part,
+  # an unresolvable build dep, a broken rust toolchain override) fails here on
+  # the PR instead of at release time, when the first real snap build would
+  # otherwise happen.
+  snap:
+    name: snap packaging (dry run)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve snap version
+        # core24 has no git in the build environment for craftctl to resolve
+        # the version itself, so stamp it the same way the release build does.
+        run: git describe --tags --always | sed 's/^v//' > snap/.version
+
+      - name: Build snap
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79  # v1.3.0
