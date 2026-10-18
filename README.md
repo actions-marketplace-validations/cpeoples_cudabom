@@ -14,7 +14,7 @@
   <a href="https://github.com/cpeoples/cudabom/actions/workflows/cargo-audit.yml"><img src="https://img.shields.io/github/actions/workflow/status/cpeoples/cudabom/cargo-audit.yml?branch=main&label=cargo-audit&style=flat-square&logo=rust&logoColor=white" alt="cargo-audit" /></a>&nbsp;&nbsp;
   <a href="https://github.com/cpeoples/cudabom/releases/latest"><img src="https://img.shields.io/badge/SLSA-Level%203-success?style=flat-square&logo=slsa&logoColor=white" alt="SLSA Build Level 3" /></a>&nbsp;&nbsp;
   <a href="https://github.com/cpeoples/cudabom/releases/latest"><img src="https://img.shields.io/badge/SBOM-CycloneDX-success?style=flat-square&logo=cyclonedx&logoColor=white" alt="CycloneDX SBOM" /></a>&nbsp;&nbsp;
-  <a href="https://github.com/cpeoples/cudabom/blob/main/advisories/index.json"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fcpeoples%2Fcudabom%2Fmain%2Fadvisories%2Fbadge-cuda.json&style=flat-square&logo=nvidia" alt="CUDA toolkit families with tracked NVIDIA advisories" /></a>&nbsp;&nbsp;
+  <a href="https://github.com/cpeoples/cudabom/blob/main/advisories/index.json"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fcpeoples%2Fcudabom%2Fmain%2Fadvisories%2Fbadge-cuda.json&style=flat-square" alt="CUDA toolkit families with tracked NVIDIA advisories" /></a>&nbsp;&nbsp;
   <a href="https://github.com/cpeoples/cudabom/releases/latest"><img src="https://img.shields.io/badge/Sigstore-verified-success?style=flat-square&logo=sigstore&logoColor=white" alt="Sigstore verified" /></a>&nbsp;&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License Apache-2.0" /></a>
 </p>

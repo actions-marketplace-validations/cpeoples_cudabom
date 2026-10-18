@@ -141,6 +141,7 @@ jobs:
             label: "CUDA",
             message: $msg,
             color: "76B900",
+            namedLogo: "nvidia",
             logoColor: "white"
           }' > "$BADGE_PATH"
           echo "badge message: $message"
