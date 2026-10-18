@@ -142,7 +142,8 @@ jobs:
             message: $msg,
             color: "76B900",
             namedLogo: "nvidia",
-            logoColor: "white"
+            logoColor: "white",
+            cacheSeconds: 3600
           }' > "$BADGE_PATH"
           echo "badge message: $message"
 
