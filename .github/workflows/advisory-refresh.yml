@@ -36,6 +36,7 @@ env:
   UPSTREAM_REPO: product-security
   INDEX_PATH: advisories/index.json
   MAP_PATH: advisories/product-map.json
+  BADGE_PATH: advisories/badge-cuda.json
 
 jobs:
   refresh:
@@ -118,13 +119,39 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Regenerate CUDA families badge
+        run: |
+          set -euo pipefail
+          # The README "CUDA" badge reads this shields.io endpoint file. Families
+          # are taken only from the cuda-toolkit component's version ranges, since
+          # other components (tensorrt, nvjpeg, ...) carry their own unrelated
+          # version lines that are not CUDA toolkit versions.
+          families="$(jq -r '
+            [ .advisories[].affected[]?
+              | select(.component == "cuda-toolkit")
+              | (.affected_ranges[]?, .fixed_ranges[]?)
+              | (.fixed // .affected // empty)
+              | tostring | split(".")[0]
+              | select(test("^[0-9]+$")) | tonumber
+            ] | unique | sort
+          ' "$INDEX_PATH")"
+          message="$(echo "$families" | jq -r 'map("\(.).x") | join(" \u00b7 ")')"
+          jq -n --arg msg "$message" '{
+            schemaVersion: 1,
+            label: "CUDA",
+            message: $msg,
+            color: "76B900",
+            logoColor: "white"
+          }' > "$BADGE_PATH"
+          echo "badge message: $message"
+
       - name: Detect changes
         id: diff
         run: |
           set -euo pipefail
-          if git diff --quiet -- "$INDEX_PATH"; then
+          if git diff --quiet -- "$INDEX_PATH" "$BADGE_PATH"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No change to $INDEX_PATH; nothing to do."
+            echo "No change to $INDEX_PATH or $BADGE_PATH; nothing to do."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -142,7 +169,9 @@ jobs:
           base: main
           commit-message: "chore(advisories): refresh index at ${{ steps.rev.outputs.rev }}"
           title: "chore(advisories): refresh index (${{ steps.build.outputs.advisories }} advisories)"
-          add-paths: ${{ env.INDEX_PATH }}
+          add-paths: |
+            ${{ env.INDEX_PATH }}
+            ${{ env.BADGE_PATH }}
           delete-branch: true
           sign-commits: true
           body: |
