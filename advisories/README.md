@@ -16,6 +16,16 @@ component names. Matching is case-insensitive and whitespace-normalized:
 A product with no mapping is never guessed. `cudabom db status` lists unmapped
 products so this file can be extended.
 
+## `badge-cuda.json`
+
+A shields.io [endpoint](https://shields.io/badges/endpoint-badge) file that
+backs the "CUDA" badge in the project README. The `message` lists the CUDA
+toolkit families that have tracked NVIDIA advisories, derived only from the
+`cuda-toolkit` component's version ranges in `index.json` (other components
+carry their own unrelated version lines). It is regenerated from `index.json`
+by the `advisory-refresh` workflow and reviewed in the same pull request, so it
+never drifts from the advisory data. Do not edit it by hand.
+
 ## Building an index from local CSAF
 
 ```
